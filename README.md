@@ -1,9 +1,7 @@
 # 數據集介紹
 數據集包含了從 2010 年 12 月 1 日到 2011 年 12 月 9 日期間，英國境內的電商交易紀錄。平台上的買家大多為批發商，商品主要為季節性禮品。
 
-- **資料來源**： University of California Irvine 機器學習資料庫
-![image](https://github.com/user-attachments/assets/7e73bc5a-7430-4d89-90ad-40c5805d4f29)
-[Online Retail Data Set](https://archive.ics.uci.edu/dataset/352/online+retail)
+- **資料來源**： University of California Irvine 機器學習資料庫 [Online Retail Data Set](https://archive.ics.uci.edu/dataset/352/online+retail)
 - **包含信息**：訂單編號、商品描述、數量、單價、國家等。
 
 # 專案目標
