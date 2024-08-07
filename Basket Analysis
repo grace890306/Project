@@ -1,0 +1,156 @@
+# 讀取數據集
+df = pd.read_csv('/Users/chien/Desktop/Online Retail.csv')
+
+# 數據清理
+df['Description'] = df['Description'].str.strip().str.lower()
+df.dropna(axis=0, subset=['InvoiceNo'], inplace=True)
+df['InvoiceNo'] = df['InvoiceNo'].astype('str')
+df = df[~df['InvoiceNo'].str.contains('C') & ~df['Description'].isin(['postage', 'dotcom postage'])]
+
+# 過濾僅包含 United Kingdom 的數據
+uk_df = df[df['Country'] == 'United Kingdom']
+
+# 構建購物籃矩陣
+basket = (uk_df
+          .groupby(['InvoiceNo', 'Description'])['Quantity']
+          .sum().unstack().reset_index().fillna(0)
+          .set_index('InvoiceNo'))
+
+# 將數量轉換為布爾值
+basket_sets = basket.astype(bool)
+
+# 計算支持度分佈
+item_support = basket_sets.mean().sort_values(ascending=False)
+
+# 繪製支持度分佈圖
+plt.figure(figsize=(10, 6))
+plt.hist(item_support, bins=50, edgecolor='k', alpha=0.7)
+plt.xlabel('Support')
+plt.ylabel('Frequency')
+plt.title('Support Distribution')
+plt.show()
+
+# 使用Apriori算法挖掘頻繁項集並使用計算出的支持度閾值
+frequent_itemsets = apriori(basket_sets, min_support=0.01, use_colnames=True)
+frequent_itemsets = frequent_itemsets.sort_values('support', ascending=False)
+print(f"熱銷商品組合數量: {len(frequent_itemsets)}")
+print("熱銷商品組合:")
+print(frequent_itemsets.head(10))
+
+pd.set_option('display.width', 1000)
+pd.set_option('display.max_rows', 1000)
+pd.set_option('display.max_colwidth', 200)
+
+# 提取關聯規則
+a_rules = association_rules(frequent_itemsets, metric="lift", min_threshold=1)
+a_rules = a_rules.sort_values(by=['lift', 'confidence'], ascending=[False, False])
+print("初始關聯規則:")
+print(a_rules[['antecedents','consequents','support','confidence','lift']].head(100))
+
+# 定義函數以刪除顏色、大小以及 set/數字
+def remove_color(description):
+    color_pattern = re.compile(r'\b(red|green|blue|pink|yellow|black|white|purple|orange|brown|jumbo|and|set\b(?:/\d+)?\b)\b', re.IGNORECASE)
+    return color_pattern.sub('', description).strip()
+
+# 計算兩個描述的共同詞比例
+def calculate_common_word_ratio(desc1, desc2):
+    words1 = set(desc1.split())
+    words2 = set(desc2.split())
+    common_words = words1.intersection(words2)
+    total_words = words1.union(words2)
+    return len(common_words) / len(total_words) if total_words else 0
+
+# 定義函數以檢查主要部分是否相似
+def is_similar_without_color(antecedents, consequents, threshold=0.1):
+    antecedents_main = [remove_color(item) for item in antecedents]
+    consequents_main = [remove_color(item) for item in consequents]
+    
+    contains_keywords = any('bag' in a and 'shopper' in c or 'shopper' in a and 'bag' in c or 'bag' in a and 'bag' in c for a in antecedents_main for c in consequents_main)
+    if contains_keywords:
+        return True
+    
+    for a in antecedents_main:
+        for c in consequents_main:
+            if calculate_common_word_ratio(a, c) > threshold:
+                return True
+    return False
+
+# 計算每筆交易的收入貢獻值
+uk_df['Revenue'] = uk_df['UnitPrice'] * uk_df['Quantity']
+average_order_value = uk_df.groupby('Description')['Revenue'].mean().reset_index()
+average_order_value.columns = ['Description', 'Average Order Value']
+
+# 計算每條規則的總平均訂單價值
+def calculate_total_order_value(row):
+    antecedents_avg = average_order_value[average_order_value['Description'].isin(row['antecedents'])]['Average Order Value'].sum()
+    consequents_avg = average_order_value[average_order_value['Description'].isin(row['consequents'])]['Average Order Value'].sum()
+    return antecedents_avg + consequents_avg
+
+# 過濾相似的關聯規則
+filtered_rules = a_rules[~a_rules.apply(lambda row: is_similar_without_color(row['antecedents'], row['consequents']), axis=1)]
+filtered_rules = filtered_rules.sort_values(by=['lift', 'confidence'], ascending=[False, False])
+filtered_rules['Total Order Value'] = filtered_rules.apply(calculate_total_order_value, axis=1)
+print("過濾後的關聯規則:")
+print(filtered_rules[['antecedents','consequents','support','confidence','lift', 'Total Order Value']].head(10))
+
+# 繪製 Lift 分佈圖
+plt.figure(figsize=(10, 6))
+plt.hist(filtered_rules['lift'], bins=50, edgecolor='k', alpha=0.7)
+plt.xlabel('Lift')
+plt.ylabel('Frequency')
+plt.title('Lift Distribution')
+plt.show()
+
+# 使用 quantile 來確定前 20% 的 Lift 閾值
+quantile_20 = filtered_rules['lift'].quantile(0.80)
+print(f'前 20% 的 Lift 閾值: {quantile_20}')
+# 過濾出 Lift 大於等於該閾值的關聯規則
+quantile_20_rules = filtered_rules[filtered_rules['lift'] >= quantile_20]
+# 按總訂單價值和提升值進行雙重排序
+best_rules = quantile_20_rules.sort_values(by=['Total Order Value', 'lift', 'confidence'], ascending=[False, False, False])
+print("按總訂單價值和提升值排序的best bundling:")
+print(best_rules[['antecedents','consequents','support','confidence','lift','Total Order Value']])
+
+# 刪除 support 和 lift 相同的重複行
+seen_combinations = set()
+unique_best_rules = []
+for idx, row in best_rules.iterrows():
+    combination = frozenset(row['antecedents']).union(row['consequents'])
+    if combination not in seen_combinations:
+        seen_combinations.add(combination)
+        unique_best_rules.append(row)
+print(seen_combinations)
+best_bundling = pd.DataFrame(unique_best_rules)
+print(f'The DataFrame has {best_bundling.shape[0]} rows and {best_bundling.shape[1]} columns.')
+
+# 只保留前10行
+best_bundling = best_bundling.head(10)
+
+# 添加索引欄位
+best_bundling['Index'] = [chr(65 + i) for i in range(len(best_bundling))]
+best_bundling = best_bundling.set_index('Index')
+print(best_bundling[['antecedents','consequents','support','lift','Total Order Value']])
+
+plt.figure(figsize=(10, 6))
+
+# 使用更大的比例因子來設置散點的大小，以使差異更明顯
+size_factor = 10000
+sc = plt.scatter(best_bundling['lift'], best_bundling['Total Order Value'], 
+                 c=best_bundling['Total Order Value'], cmap='viridis', 
+                 s=best_bundling['support'] * size_factor, alpha=0.6)
+
+# 為每個點添加標籤，並稍微偏移標籤位置
+for i, txt in enumerate(best_bundling.index):
+    plt.annotate(txt, 
+                 (best_bundling['lift'][i], best_bundling['Total Order Value'][i]), 
+                 xytext=(5, 5), textcoords='offset points')
+
+# 自定義圖例來說明散點的大小代表 Support
+legend_support = mlines.Line2D([], [], color='w', marker='o', markersize=10, label='Support (size)', 
+                               markerfacecolor='k', markeredgewidth=0)
+plt.legend(handles=[legend_support], loc='upper right')
+
+plt.xlabel('Lift')
+plt.ylabel('Total Order Value')
+plt.title('Scatter Plot of Best Bundling')
+plt.show()
