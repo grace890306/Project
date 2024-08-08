@@ -1,3 +1,11 @@
+import pandas as pd
+import re
+from mlxtend.frequent_patterns import apriori, association_rules
+from sklearn.metrics.pairwise import cosine_similarity
+import matplotlib.pyplot as plt
+import matplotlib.lines as mlines
+
+
 # 讀取數據集
 df = pd.read_csv('/Users/chien/Desktop/Online Retail.csv')
 
